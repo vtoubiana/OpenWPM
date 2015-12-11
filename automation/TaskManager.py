@@ -233,17 +233,19 @@ class TaskManager:
 
         # passes off command and waits for a success (or failure signal)
         browser.command_queue.put(command)
-        command_succeeded = False
+        command_succeeded = 0 #1 success, 0 failure from error, -1 timeout
         command_arguments = command[1] if len(command) > 1 else None
 
         # received reply from BrowserManager, either success signal or failure notice
         try:
             status = browser.status_queue.get(True, timeout)
             if status == "OK":
-                command_succeeded = True
+                command_succeeded = 1
             else:
+                command_succeeded = 0
                 print("Received failure status while executing command: " + command[0])
         except EmptyQueue:
+            command_succeeded = -1
             print("Timeout while executing command, " + command[0] +
                   " killing browser manager")
 
@@ -262,9 +264,29 @@ class TaskManager:
         """ goes to a url """
         self.distribute_command(('GET', url), index, overwrite_timeout, reset)
         
-    def browse(self, url, index=None, overwrite_timeout=None):
-        """ browse a website """
-        self.distribute_command(('BROWSE', url), index, overwrite_timeout, reset)
+    def browse(self, url, num_links = 2, index=None, overwrite_timeout=None, reset=False):
+        """ browse a website and visit <num_links> links on the page """
+        self.distribute_command(('BROWSE', url, num_links), index, overwrite_timeout, reset)
+    
+    def buying_intent(self, shope="sport", index=None, overwrite_timeout=None, reset=False):
+        """ Buying Intent """
+        print "Will call command buy intent"
+        self.distribute_command(('BUYING_INTENT', shope), index, overwrite_timeout, reset)
+    
+    def exelate_settings(self, age=None, gender=None, index=None, overwrite_timeout=None, reset=False):
+        """ set google ad settings """
+        print "Will call command set setting on browser "+ str(index)
+        self.distribute_command(('EXELATE_SETTINGS', age, gender, None, None), index, overwrite_timeout, reset)
+      
+    def google_settings(self, optin=True, index=None, overwrite_timeout=None, reset=False):
+        """ set google ad settings """
+        print "Will call command set setting"
+        self.distribute_command(('GOOGLE_SETTINGS', optin), index, overwrite_timeout, reset)
+
+    def delete_all_cookies(self, index=None, overwrite_timeout=None, reset=True):
+        """ goes to a url """
+        print "Will call command delete cookies on" +str(index)
+        self.distribute_command(('DELETE_COOKIES',), index, overwrite_timeout, reset)
 
     def dump_storage_vectors(self, url, start_time, index=None, overwrite_timeout=None):
         """ dumps the local storage vectors (flash, localStorage, cookies) to db """
@@ -273,6 +295,10 @@ class TaskManager:
     def dump_profile(self, dump_folder, close_webdriver=False, index=None, overwrite_timeout=None):
         """ dumps from the profile path to a given file (absolute path) """
         self.distribute_command(('DUMP_PROF', dump_folder, close_webdriver), index, overwrite_timeout)
+    
+    def load_profile(self, load_tar, index=None, overwrite_timeout=None):
+        """ Load a from the tar to the current profile folder (absolute path) """
+        self.distribute_command(('LOAD_PROF', load_tar), index, overwrite_timeout)
 
     def extract_links(self, index = None, overwrite_timeout = None):
         self.distribute_command(('EXTRACT_LINKS',), index, overwrite_timeout)
