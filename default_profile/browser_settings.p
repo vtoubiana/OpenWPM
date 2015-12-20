@@ -1,0 +1,12 @@
+(dp1
+S'extensions'
+p2
+(lp3
+sS'screen_res'
+p4
+(I1366
+I768
+tp5
+sS'ua_string'
+p6
+Ns.
