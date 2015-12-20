@@ -11,6 +11,7 @@ DEFAULT_SCREEN_RES = (1366, 768)  # Default screen res when no preferences are g
 
 
 def deploy_firefox(browser_params, crash_recovery):
+
     """ launches a firefox instance with parameters set by the input dictionary """
     root_dir = os.path.dirname(__file__)  # directory of this file
     
@@ -66,6 +67,7 @@ def deploy_firefox(browser_params, crash_recovery):
         # Avoid start-up screen - set the necessary flags for each extension
         for item in ext_dict[extension]['startup']:
             fp.set_preference(*item)
+   
 
     if profile_settings['ua_string'] is not None:
         fp.set_preference("general.useragent.override", profile_settings['ua_string'])
@@ -105,6 +107,10 @@ def deploy_firefox(browser_params, crash_recovery):
     if browser_params['donottrack']:
         fp.set_preference("privacy.donottrackheader.enabled", True)
         fp.set_preference("privacy.donottrackheader.value", 1)
+
+    if browser_params['watch_rtb']:
+        ext_loc = os.path.join(root_dir, 'firefox_extensions/', 'rtb_watcher.xpi')
+        fp.add_extension(extension=ext_loc)
 
     # Sets the third party cookie setting
     if browser_params['tp_cookies'].lower() == 'never':
