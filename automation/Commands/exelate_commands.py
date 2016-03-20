@@ -79,7 +79,6 @@ def exelate_set_income(driver, income):
                 box = etbody.find_element_by_xpath(".//td/input[5]")
             elif(income<=20000):
                 box = etbody.find_element_by_xpath(".//td/input[10]")
-            box.click()
             time.sleep(3)
             box.click()
 
@@ -94,6 +93,7 @@ def exelate_set_gender(driver, gender):
                 box = etbody.find_element_by_xpath(".//input[1]")        # MALE          
             elif(gender == 'm'):
                 box = etbody.find_element_by_xpath(".//input[2]")            # FEMALE
+            time.sleep(3)
             box.click()
 #           #self.log("setGender="+gender+"||"+str(self.treatment_id))
             #self.log('treatment', 'gender', gender)
@@ -123,6 +123,9 @@ def exelate_set_age(driver, age):
                 box = etbody.find_element_by_xpath(".//td/input[5]")
             elif(age>=65):
                 box = etbody.find_element_by_xpath(".//td/input[6]")
+
+         
+            time.sleep(3)
             box.click()
             time.sleep(3)
             #gdiv.find_element_by_xpath(".//div[@class='"+SUBMIT_DIV+"']").click()

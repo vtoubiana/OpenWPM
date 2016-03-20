@@ -1,0 +1,26 @@
+{
+    "proxy": false,
+    "extension": {
+        "enabled": false,
+        "cookieInstrument": false,
+	"jsInstrument": false,
+        "cpInstrument": false
+    },
+    "save_javascript": false,
+
+    "random_attributes": false,
+    "bot_mitigation": false,
+    "disable_flash": true,
+    "debugging": false,
+    "profile_tar": null,
+    "profile_archive_dir": null,
+    "headless": false,
+    "browser": "firefox",
+    "watch_rtb": true,
+    "tp_cookies": "always",
+    "donottrack": false,
+    "ghostery": false,
+    "https-everywhere": false,
+    "adblock-plus": false,
+    "tracking-protection": false
+}

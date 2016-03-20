@@ -1,6 +1,12 @@
+from ..MPLogger import loggingclient
 from ..Commands.profile_commands import load_profile
+import configure_firefox
 
+from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
+from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
+from selenium.webdriver.remote.remote_connection import LOGGER
 from selenium import webdriver
+
 from pyvirtualdisplay import Display
 import shutil
 import os
@@ -9,25 +15,36 @@ import random
 
 DEFAULT_SCREEN_RES = (1366, 768)  # Default screen res when no preferences are given
 
-
-def deploy_firefox(browser_params, crash_recovery):
-
+def deploy_firefox(status_queue, browser_params, manager_params, crash_recovery):
     """ launches a firefox instance with parameters set by the input dictionary """
     root_dir = os.path.dirname(__file__)  # directory of this file
-    
+    logger = loggingclient(*manager_params['logger_address'])
+
     display_pid = None
+    display_port = None
     fp = webdriver.FirefoxProfile()
     browser_profile_path = fp.path + '/'
-    
+    status_queue.put(('STATUS','Profile Created',browser_profile_path))
+
+    # Enable logging
+    #LOGGER.setLevel(logging.WARNING)
+    #fp.set_preference("webdriver.log.file", os.path.expanduser('~/selenium_logging'))
+
     profile_settings = None  # Imported browser settings
     ext_dict = None  # Dictionary of supported extensions
     if browser_params['profile_tar'] and not crash_recovery:
-        profile_settings = load_profile(browser_profile_path, browser_params['profile_tar'],
+        logger.debug("BROWSER %i: Loading initial browser profile from: %s" % (browser_params['crawl_id'], browser_params['profile_tar']))
+        profile_settings = load_profile(browser_profile_path, manager_params, browser_params,
+                                        browser_params['profile_tar'],
                                         load_flash=browser_params['disable_flash'] is False)
     elif browser_params['profile_tar']:
-        profile_settings = load_profile(browser_profile_path, browser_params['profile_tar'])
+        logger.debug("BROWSER %i: Loading recovered browser profile from: %s" % (browser_params['crawl_id'], browser_params['profile_tar']))
+        profile_settings = load_profile(browser_profile_path, manager_params, browser_params,
+                                        browser_params['profile_tar'])
+    status_queue.put(('STATUS','Profile Tar',None))
 
     if browser_params['random_attributes'] and profile_settings is None:
+        logger.debug("BROWSER %i: Loading random attributes for browser" % browser_params['crawl_id'])
         profile_settings = dict()
 
         # load a random set of extensions
@@ -67,21 +84,41 @@ def deploy_firefox(browser_params, crash_recovery):
         # Avoid start-up screen - set the necessary flags for each extension
         for item in ext_dict[extension]['startup']:
             fp.set_preference(*item)
-   
 
     if profile_settings['ua_string'] is not None:
+        logger.debug("BROWSER %i: Overriding user agent string with the following: %s" % (browser_params['crawl_id'], profile_settings['ua_string']))
         fp.set_preference("general.useragent.override", profile_settings['ua_string'])
 
     if browser_params['headless']:
         display = Display(visible=0, size=profile_settings['screen_res'])
         display.start()
         display_pid = display.pid
+        display_port = display.cmd_param[5][1:]
+    status_queue.put(('STATUS','Display',(display_pid, display_port)))
 
     if browser_params['debugging']:
         firebug_loc = os.path.join(root_dir, 'firefox_extensions/firebug-1.11.0.xpi')
         fp.add_extension(extension=firebug_loc)
         fp.set_preference("extensions.firebug.currentVersion", "1.11.0")  # Avoid startup screen
 
+    if browser_params['extension']['enabled']:
+        ext_loc = os.path.join(root_dir + "/../", 'Extension/firefox/@openwpm-0.0.1.xpi')
+        ext_loc = os.path.normpath(ext_loc)
+        fp.add_extension(extension=ext_loc)
+        with open(browser_profile_path + 'database_settings.txt', 'w') as f:
+            host, port = manager_params['aggregator_address']
+            crawl_id = browser_params['crawl_id']
+            f.write(host + ',' + str(port) + ',' + str(crawl_id))
+            f.write(','+str(browser_params['extension']['cookieInstrument']))
+            f.write(','+str(browser_params['extension']['jsInstrument']))
+            f.write(','+str(browser_params['extension']['cpInstrument']))
+        logger.debug("BROWSER %i: OpenWPM Firefox extension loaded" % browser_params['crawl_id'])
+
+    if browser_params['watch_rtb']:
+        ext_loc = os.path.join(root_dir, 'firefox_extensions/', 'rtb_watcher.xpi')
+        fp.add_extension(extension=ext_loc)
+        
+        
     if browser_params['proxy']:
         PROXY_HOST = "localhost"
         PROXY_PORT = browser_params['proxy']
@@ -108,10 +145,6 @@ def deploy_firefox(browser_params, crash_recovery):
         fp.set_preference("privacy.donottrackheader.enabled", True)
         fp.set_preference("privacy.donottrackheader.value", 1)
 
-    if browser_params['watch_rtb']:
-        ext_loc = os.path.join(root_dir, 'firefox_extensions/', 'rtb_watcher.xpi')
-        fp.add_extension(extension=ext_loc)
-
     # Sets the third party cookie setting
     if browser_params['tp_cookies'].lower() == 'never':
         fp.set_preference("network.cookie.cookieBehavior", 1)
@@ -127,6 +160,8 @@ def deploy_firefox(browser_params, crash_recovery):
     # Disable health reports
     fp.set_preference('datareporting.healthreport.uploadEnabled', False)
     fp.set_preference('toolkit.telemetry.enabled', False)
+    
+    fp.set_preference('xpinstall.signatures.required',False)
 
     fp.set_preference('extensions.checkCompatibility.nightly', False)
     fp.set_preference('browser.search.update', False)
@@ -141,10 +176,21 @@ def deploy_firefox(browser_params, crash_recovery):
     fp.set_preference('network.prefetch-next', False)  # no need to prefetch
     # Disable page thumbnails
     fp.set_preference('browser.pagethumbnails.capturing_disabled', True)
+    fp.set_preference('general.autoScroll', True);
+    
+    firefox_capabilities = DesiredCapabilities.FIREFOX
+    firefox_capabilities['elementScrollBehavior'] = 1
 
-    driver = webdriver.Firefox(firefox_profile=fp)
+    # Launch the webdriver
+    status_queue.put(('STATUS','Launch Attempted',None))
+    #fb = FirefoxBinary(root_dir  + "/../../firefox/firefox", log_file=open(root_dir + '/../../firefox_logging','w'))
+    #fb = FirefoxBinary(root_dir  + "/../../firefox-bin/firefox")
+    #driver = webdriver.Firefox(firefox_profile=fp, firefox_binary=fb)
+    driver = webdriver.Firefox(firefox_profile=fp, capabilities = firefox_capabilities )
+
+    status_queue.put(('STATUS','Browser Launched',(int(driver.binary.process.pid), profile_settings)))
 
     # set window size
     driver.set_window_size(*profile_settings['screen_res'])
 
-    return driver, browser_profile_path, display_pid, profile_settings
+    return driver, browser_profile_path, profile_settings

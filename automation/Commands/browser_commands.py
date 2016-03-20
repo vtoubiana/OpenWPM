@@ -11,6 +11,7 @@ import random
 import time
 
 from ..SocketInterface import clientsocket
+from ..MPLogger import loggingclient
 from utils.lso import get_flash_cookies
 from utils.firefox_profile import get_cookies  # todo: add back get_localStorage,
 from utils.webdriver_extensions import scroll_down, wait_until_loaded, get_intra_links
@@ -67,10 +68,10 @@ def tab_restart_browser(webdriver):
     switch_to_new_tab.key_down(Keys.CONTROL).send_keys(Keys.PAGE_UP).key_up(Keys.CONTROL)
     switch_to_new_tab.key_down(Keys.CONTROL).send_keys('w').key_up(Keys.CONTROL)
     switch_to_new_tab.perform()
-    time.sleep(5)
+    time.sleep(0.5)
 
 
-def get_website(url, webdriver, proxy_queue, browser_params):
+def get_website(url, webdriver, proxy_queue, browser_params, extension_socket):
     """
     goes to <url> using the given <webdriver> instance
     <proxy_queue> is queue for sending the proxy the current first party site
@@ -79,19 +80,21 @@ def get_website(url, webdriver, proxy_queue, browser_params):
     tab_restart_browser(webdriver)
     main_handle = webdriver.current_window_handle
 
-    # sends top-level domain to proxy
-    # then, waits for it to finish marking traffic in queue before moving to new site
+    # sends top-level domain to proxy and extension (if enabled)
+    # then, waits for it to finish marking traffic in proxy before moving to new site
     if proxy_queue is not None:
         proxy_queue.put(url)
         while not proxy_queue.empty():
             time.sleep(0.001)
-    
+    if extension_socket is not None:
+        extension_socket.send(url)
+
     # Execute a get through selenium
     try:
         webdriver.get(url)
     except TimeoutException:
         pass
-    
+
     # Close modal dialog if exists
     try:
         WebDriverWait(webdriver, .5).until(EC.alert_is_present())
@@ -113,12 +116,12 @@ def get_website(url, webdriver, proxy_queue, browser_params):
     if browser_params['bot_mitigation']:
         bot_mitigation(webdriver)
 
-def extract_links(webdriver, browser_params):
+def extract_links(webdriver, browser_params, manager_params):
     link_elements = webdriver.find_elements_by_tag_name('a')
     link_urls = set(element.get_attribute("href") for element in link_elements)
 
     sock = clientsocket()
-    sock.connect(*browser_params['aggregator_address'])
+    sock.connect(*manager_params['aggregator_address'])
     create_table_query = ("""
     CREATE TABLE IF NOT EXISTS links_found (
       found_on TEXT,
@@ -137,8 +140,17 @@ def extract_links(webdriver, browser_params):
             sock.send((insert_query_string, (current_url, link)))
 
     sock.close()
+    
+    
+def optOutYOC(webdriver):
+    webdriver.get("http://www.youronlinechoices.com/fr/controler-ses-cookies/")
+    time.sleep(60)
+    webdriver.execute_script("window.scrollBy(0,1450)")
+    opt_out_link = webdriver.find_element_by_id("allOptOutButton");
+    opt_out_link.click();
+    time.sleep(60)
 
-def browse_website(url, num_links, webdriver, proxy_queue, browser_params):
+def browse_website(url, num_links, webdriver, proxy_queue, browser_params, manager_params, extension_socket):
     """
     calls get_website before visiting <num_links> present on the page
     NOTE: top_url will NOT be properly labeled for requests to subpages
@@ -146,7 +158,11 @@ def browse_website(url, num_links, webdriver, proxy_queue, browser_params):
           to this function.
     """
     # First get the site
-    get_website(url, webdriver, proxy_queue, browser_params)
+    get_website(url, webdriver, proxy_queue, browser_params, extension_socket)
+
+    # Connect to logger
+    logger = loggingclient(*manager_params['logger_address'])
+
     # Then visit a few subpages
     for i in range(num_links):
         links = get_intra_links(webdriver, url)
@@ -154,8 +170,8 @@ def browse_website(url, num_links, webdriver, proxy_queue, browser_params):
         if len(links) == 0:
             break
         r = int(random.random()*len(links)-1)
-        print "BROWSE: visiting link to %s" % links[r].get_attribute("href")
-        
+        logger.info("BROWSER %i: visiting internal link %s" % (browser_params['crawl_id'], links[r].get_attribute("href")))
+
         try:
             links[r].click()
             wait_until_loaded(webdriver, 300)
@@ -175,6 +191,28 @@ def buying_intent( shope, webdriver, browser_params):
 	if shope == "shopping":
 		crawler_Clothes(webdriver)
 
+def dump_flash_cookies(top_url, start_time, webdriver, browser_params, manager_params):
+    """ Save newly changed Flash LSOs to database
+    We determine which LSOs to save by the `start_time` timestamp.
+    This timestamp should be taken prior to calling the `get` for
+    which creates these changes.
+    """
+    # Set up a connection to DataAggregator
+    tab_restart_browser(webdriver)  # kills traffic so we can cleanly record data
+    sock = clientsocket()
+    sock.connect(*manager_params['aggregator_address'])
+
+    # Flash cookies
+    flash_cookies = get_flash_cookies(start_time)
+    for cookie in flash_cookies:
+        query = ("INSERT INTO flash_cookies (crawl_id, page_url, domain, filename, local_path, \
+                  key, content) VALUES (?,?,?,?,?,?,?)", (browser_params['crawl_id'], top_url, cookie.domain,
+                                                          cookie.filename, cookie.local_path,
+                                                          cookie.key, cookie.content))
+        sock.send(query)
+
+    # Close connection to db
+    sock.close()
 
 def set_exelate_settings(age, gender, language, interests, webdriver, browser_params):
 	print "Called set\exelate\setting "+  gender
@@ -207,9 +245,7 @@ def dump_storage_vectors(top_url, start_time, webdriver, browser_params):
     # Set up a connection to DataAggregator
     tab_restart_browser(webdriver)  # kills traffic so we can cleanly record data
     sock = clientsocket()
-    sock.connect(*browser_params['aggregator_address'])
-
-    # Wait for SQLite Checkpointing - never happens when browser open
+    sock.connect(*manager_params['aggregator_address'])
 
     # Flash cookies
     flash_cookies = get_flash_cookies(start_time)
@@ -219,6 +255,25 @@ def dump_storage_vectors(top_url, start_time, webdriver, browser_params):
                                                           cookie.filename, cookie.local_path,
                                                           cookie.key, cookie.content))
         sock.send(query)
+
+    # Close connection to db
+    sock.close()
+
+def dump_profile_cookies(top_url, start_time, webdriver, browser_params, manager_params):
+    """ Save changes to Firefox's cookies.sqlite to database
+
+    We determine which cookies to save by the `start_time` timestamp.
+    This timestamp should be taken prior to calling the `get` for
+    which creates these changes.
+
+    Note that the extension's cookieInstrument is preferred to this approach,
+    as this is likely to miss changes still present in the sqlite `wal` files.
+    This will likely be removed in a future version.
+    """
+    # Set up a connection to DataAggregator
+    tab_restart_browser(webdriver)  # kills traffic so we can cleanly record data
+    sock = clientsocket()
+    sock.connect(*manager_params['aggregator_address'])
 
     # Cookies
     rows = get_cookies(browser_params['profile_path'], start_time)
